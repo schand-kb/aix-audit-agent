@@ -1,0 +1,21 @@
+# Preserve the directories while keeping operator-generated artifacts out of Git.
+evidence/*
+!evidence/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Audit output, temporary files, editor backups, and secrets.
+aix_audit_*.txt
+*.audit.txt
+*.tmp
+*.log
+*.swp
+*.swo
+*.bak
+*~
+.DS_Store
+.env
+.env.*
+credentials.json
+*.key
+*.pem
