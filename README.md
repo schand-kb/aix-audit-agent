@@ -5,7 +5,7 @@ A safe, evidence-based, **read-only by default** audit toolkit for IBM AIX platf
 ## Contents
 
 - [AGENT.md](AGENT.md): audit role, evidence standards, confidence classifications, and safety boundary.
-- [scripts/aix_readonly_audit.ksh](scripts/aix_readonly_audit.ksh): V1 local AIX collector using the reviewed command allowlist.
+- [scripts/aix_readonly_audit.ksh](scripts/aix_readonly_audit.ksh): local AIX collector with the original 19 V1 commands and a separately accounted V1.1 collection phase.
 - [profiles/README.md](profiles/README.md): guidance for future host profiles.
 - [evidence/](evidence/): reserved for evidence managed by the operator.
 - [reports/](reports/): reserved for reports managed by the operator.
@@ -14,7 +14,7 @@ A safe, evidence-based, **read-only by default** audit toolkit for IBM AIX platf
 
 Run the collector manually on the local AIX LPAR, from an engineer-controlled trusted directory that is not writable by untrusted users. Do not run it from `/tmp` or any shared writable directory. The script rejects all arguments and does not accept a hostname, server, output location, command, or configuration file. Its only permitted host-side write is exactly one new evidence file in the current directory named `aix_audit_YYYYMMDD_HHMMSS_PID.txt`. `umask 077` normally gives the new file owner-only permissions; `set -C` provides noclobber protection. V1 does not claim universally race-free file creation. It does not modify existing files, append, create temporary files, delete or rename files, change existing permissions or ownership, or modify AIX configuration or operational state.
 
-V1 invokes only these reviewed command forms:
+V1 invokes these original 19 reviewed command forms:
 
 1. `hostname`
 2. `uname -a`
@@ -36,9 +36,13 @@ V1 invokes only these reviewed command forms:
 18. `errpt`
 19. `lssrc -a`
 
-Each section records its number, name, literal display command, collection timestamp, output and stderr (captured together in the evidence file), return code when executed, and status. A command is checked with `command -v` against the fixed PATH before execution. Unavailable commands are not substituted and have no invented return code. Nonzero command results are classified as `FAILED`; `PERMISSION DENIED` is not inferred without separately captured diagnostic evidence. Failed or unavailable sections do not stop later collection. The overall status is `COMPLETE` only when all 19 commands succeed; otherwise it is `INCOMPLETE / UNASSESSED`. This is collection status only, not a system-health conclusion. Missing evidence must be reported as **Insufficient Evidence**.
+The original 19 V1 command forms, order, and collection behavior are preserved. V1.1 adds separate numbered evidence sections after V1 for active VGs, LVM details, MPIO paths, FC adapter attributes, mounted filesystems, and inode usage. Its fixed forms are `lsvg -o`, `lsmpio`, `mount` (no flags or operands), and `df -i`. Dynamic forms are `lsvg "$validated_vg"`, `lsvg -p "$validated_vg"`, `lsvg -l "$validated_vg"`, `lspv "$validated_pv"`, `lsattr -El "$validated_fcs"`, and `lsmpio -l "$validated_disk"`. It also records fresh `lspv`, `lsdev -Cc disk`, and `lsdev -Cc adapter` discovery snapshots to drive bounded per-object queries; these snapshots supplement rather than replace the V1 inventory evidence.
 
-The evidence file can contain sensitive internal system configuration data, including hostname, IP addresses, routes, PVIDs, storage and adapter topology, SRC service details, and `errpt` information. Handle it as internal system configuration data and store or share it only through approved controls. V1 is intended for supported IBM AIX 7.x systems; validation to date is limited to the non-production platform described below.
+V1.1 validates complete discovery-row structure, not only the first token. It rejects malformed rows and lines containing control characters other than normal spaces or tabs. Rejected applicable rows are represented safely and recorded as skipped evidence, which makes V1.1 `INCOMPLETE / UNASSESSED`. VG names must be 1–15 ASCII letters, digits, or underscores, starting with a letter; PV and disk names must be `hdisk` or `ultracs_hdisk` followed by digits; FC adapter names must be `fcs` followed by digits. The maximums are 64 VGs, 256 PVs, 256 disks, and 64 FC adapters. Candidates beyond a cap have skipped sections; non-FC adapter names are outside the FC query scope. V1.1 does not use `errpt -a`, `fcstat`, MPIO query/reset/probe options, or filesystem mount options. V1.1 has not been runtime-tested and is not production-approved.
+
+Each section records its number, name, command or skipped operation, collection timestamp, output and stderr, return code when executed, and status. A command is checked with `command -v` against the fixed PATH before execution. Unavailable commands are not substituted and have no invented return code. Nonzero command results are classified as `FAILED`; `PERMISSION DENIED` is not inferred without separately captured diagnostic evidence. Failed or unavailable sections do not stop later independent collection. V1 and V1.1 have separate counters and statuses; overall collection status is `COMPLETE` only when both are complete. Any V1.1 skip, failure, unavailable command, cap, or accounting mismatch makes V1.1 `INCOMPLETE / UNASSESSED`. These are collection statuses only, not system-health conclusions. Missing evidence must be reported as **Insufficient Evidence**.
+
+The evidence file can contain sensitive internal system configuration data, including hostname, IP addresses, routes, PVIDs, storage and adapter topology, SRC service details, and `errpt` information. Handle it as internal system configuration data and store or share it only through approved controls. The collector targets supported IBM AIX 7.x systems. Runtime validation remains limited to the V1 non-production platform described below; V1.1 additions require separate non-production validation.
 
 ## V1 Validation Status
 
