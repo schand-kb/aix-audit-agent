@@ -42,7 +42,14 @@ The evidence file can contain sensitive internal system configuration data, incl
 
 ## V1 Validation Status
 
-V1 was successfully runtime-tested on 06-Nov-2026 on one non-production IBM AIX 7.3 LPAR (7300-04-02-2633). The syntax check and collection completed successfully, with all 19 sections successful and no remediation changes. This does not constitute production approval; additional validation is required before production use.
+V1 has been successfully runtime-tested on one non-production IBM AIX 7.3 LPAR. This validates the collector on `kbdvultdev01` running AIX `7300-04-02-2633` on 06-Nov-2026.
+
+- `/usr/bin/ksh -n` and collector execution both returned 0.
+- Exactly one evidence file was created with permissions `-rw-------`.
+- All 19 sections were classified and successful; there were no failed or unavailable sections. Overall collection status: `COMPLETE`.
+- Copilot Agent successfully analysed the resulting evidence. No remediation was performed.
+
+This does **not** constitute production approval. Further non-production validation is recommended before production deployment. Evidence files remain excluded from Git and must not be committed.
 
 ## Safety
 
