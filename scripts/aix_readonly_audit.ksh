@@ -331,11 +331,14 @@ v11_successful=0
 v11_failed=0
 v11_unavailable=0
 v11_skipped=0
+v11_not_applicable=0
 v11_section_number=19
 v11_vg_cap=64
 v11_pv_cap=256
 v11_disk_cap=256
 v11_fc_cap=64
+active_vg_inventory_valid=0
+active_vg_inventory_names='|'
 
 write_v11_section_header() {
 	v11_section_number=$((v11_section_number + 1))
@@ -375,6 +378,16 @@ record_v11_skipped() {
 	printf '%s\n' 'Command was not executed; candidate text is not repeated.'
 	v11_section_status='SKIPPED'
 	v11_skipped=$((v11_skipped + 1))
+	printf 'Section status: %s\n' "$v11_section_status"
+}
+
+record_v11_not_applicable() {
+	write_v11_section_header
+	printf 'Validated physical volume: %s\n' "$candidate_name"
+	printf 'Validated volume group: %s\n' "$pv_inventory_group"
+	printf 'Reason: %s\n' "$v11_not_applicable_reason"
+	v11_section_status='NOT APPLICABLE'
+	v11_not_applicable=$((v11_not_applicable + 1))
 	printf 'Section status: %s\n' "$v11_section_status"
 }
 
@@ -472,12 +485,10 @@ valid_pv_inventory_row() {
 			;;
 	esac
 	if [ "$#" -eq 4 ]; then
-		case "$4" in
-			active|missing) ;;
-			*) return 1 ;;
+		[ "$4" = 'active' ] || return 1
+		case "$3" in
+			[Nn][Oo][Nn][Ee]) return 1 ;;
 		esac
-	elif [ "$3" != 'None' ] && [ "$3" != 'none' ]; then
-		return 1
 	fi
 	return 0
 }
@@ -497,10 +508,9 @@ valid_lsdev_inventory_row() {
 	inventory_description=$*
 	case "$candidate_name" in
 		hdisk*|ultracs_hdisk*)
-			case "$inventory_description" in
-				*[Dd]isk*) return 0 ;;
-				*) return 1 ;;
-			esac
+			valid_disk_or_pv_name || return 1
+			[ -n "$inventory_description" ]
+			return $?
 			;;
 		fcs*)
 			case "$inventory_description" in
@@ -627,6 +637,8 @@ process_vg_inventory() {
 	valid_vg_count=0
 	queried_vg_count=0
 	cap_recorded=0
+	active_vg_inventory_valid=1
+	active_vg_inventory_names='|'
 	newline='
 '
 	while [ -n "$inventory_remaining" ]; do
@@ -642,6 +654,7 @@ process_vg_inventory() {
 		esac
 		inventory_line_number=$((inventory_line_number + 1))
 		if ! is_safe_inventory_line "$inventory_line"; then
+			active_vg_inventory_valid=0
 			v11_section_name="Unsafe active volume group row $inventory_line_number"
 			v11_display_command='No command executed; discovery line contained a control character'
 			record_v11_skipped
@@ -651,11 +664,13 @@ process_vg_inventory() {
 		if [ "$#" -gt 0 ]; then
 			candidate_name=$1
 			if [ "$#" -ne 1 ] || ! valid_vg_name; then
+				active_vg_inventory_valid=0
 				v11_section_name="Invalid volume group row $inventory_line_number"
 				v11_display_command='No command executed; row did not contain exactly one valid VG name'
 				record_v11_skipped
 			else
 				valid_vg_count=$((valid_vg_count + 1))
+				active_vg_inventory_names="${active_vg_inventory_names}${candidate_name}|"
 				if [ "$queried_vg_count" -lt "$v11_vg_cap" ]; then
 					queried_vg_count=$((queried_vg_count + 1))
 					collect_vg_details "$candidate_name"
@@ -707,6 +722,7 @@ process_pv_inventory() {
 		set -- $inventory_line
 		if [ "$#" -gt 0 ]; then
 			candidate_name=$1
+			pv_inventory_group=$3
 			if ! valid_disk_or_pv_name || ! valid_pv_inventory_row "$@"; then
 				v11_section_name="Invalid physical volume row $inventory_line_number"
 				v11_display_command='No command executed; row failed the approved inventory structure'
@@ -715,7 +731,33 @@ process_pv_inventory() {
 				valid_pv_count=$((valid_pv_count + 1))
 				if [ "$queried_pv_count" -lt "$v11_pv_cap" ]; then
 					queried_pv_count=$((queried_pv_count + 1))
-					collect_pv_detail "$candidate_name"
+					case "$pv_inventory_group" in
+						[Nn][Oo][Nn][Ee])
+							v11_section_name='Physical volume detail not applicable'
+							v11_display_command='No command executed; detailed query not applicable for an unassigned PV'
+							v11_not_applicable_reason='physical volume is not assigned to a volume group'
+							record_v11_not_applicable
+							;;
+						*)
+							if [ "$active_vg_inventory_valid" -ne 1 ]; then
+								v11_section_name='Physical volume detail skipped'
+								v11_display_command='No command executed; active volume group discovery is incomplete or unvalidated'
+								record_v11_skipped
+							else
+								case "$active_vg_inventory_names" in
+									*"|${pv_inventory_group}|"*)
+										collect_pv_detail "$candidate_name"
+										;;
+									*)
+										v11_section_name='Physical volume detail not applicable'
+										v11_display_command='No command executed; detailed query not applicable for an inactive volume group'
+										v11_not_applicable_reason='physical volume belongs to a volume group that is not active'
+										record_v11_not_applicable
+										;;
+								esac
+							fi
+							;;
+					esac
 				else
 					if [ "$cap_recorded" -eq 0 ]; then
 						v11_section_name='Physical volume enumeration cap reached'
@@ -964,7 +1006,7 @@ run_v11_inventory 'Physical volume discovery snapshot' 'lspv' pv
 run_v11_inventory 'Disk discovery snapshot' 'lsdev -Cc disk' disk
 run_v11_inventory 'Adapter discovery snapshot' 'lsdev -Cc adapter' fc
 
-v11_classified_sections=$((v11_successful + v11_failed + v11_unavailable + v11_skipped))
+v11_classified_sections=$((v11_successful + v11_failed + v11_unavailable + v11_skipped + v11_not_applicable))
 if [ "$v11_total" -ne "$v11_classified_sections" ]; then
 	v11_status='INCOMPLETE / UNASSESSED'
 elif [ "$v11_failed" -eq 0 ] && [ "$v11_unavailable" -eq 0 ] && [ "$v11_skipped" -eq 0 ]; then
@@ -984,9 +1026,10 @@ printf 'V1.1 successful sections: %s\n' "$v11_successful"
 printf 'V1.1 failed sections: %s\n' "$v11_failed"
 printf 'V1.1 unavailable sections: %s\n' "$v11_unavailable"
 printf 'V1.1 skipped sections: %s\n' "$v11_skipped"
+printf 'V1.1 not applicable sections: %s\n' "$v11_not_applicable"
 printf 'V1.1 classified sections: %s\n' "$v11_classified_sections"
-printf 'V1.1 counter invariant: %s = %s + %s + %s + %s\n' \
-	"$v11_total" "$v11_successful" "$v11_failed" "$v11_unavailable" "$v11_skipped"
+printf 'V1.1 counter invariant: %s = %s + %s + %s + %s + %s\n' \
+	"$v11_total" "$v11_successful" "$v11_failed" "$v11_unavailable" "$v11_skipped" "$v11_not_applicable"
 printf 'V1 collection status: %s\n' "$v1_status"
 printf 'V1.1 collection status: %s\n' "$v11_status"
 printf 'Overall collection status: %s\n' "$overall_status"
