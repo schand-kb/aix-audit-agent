@@ -38,7 +38,11 @@ V1 invokes only these reviewed command forms:
 
 Each section records its number, name, literal display command, collection timestamp, output and stderr (captured together in the evidence file), return code when executed, and status. A command is checked with `command -v` against the fixed PATH before execution. Unavailable commands are not substituted and have no invented return code. Nonzero command results are classified as `FAILED`; `PERMISSION DENIED` is not inferred without separately captured diagnostic evidence. Failed or unavailable sections do not stop later collection. The overall status is `COMPLETE` only when all 19 commands succeed; otherwise it is `INCOMPLETE / UNASSESSED`. This is collection status only, not a system-health conclusion. Missing evidence must be reported as **Insufficient Evidence**.
 
-The evidence file can contain sensitive internal system configuration data, including hostname, IP addresses, routes, PVIDs, storage and adapter topology, SRC service details, and `errpt` information. Handle it as internal system configuration data and store or share it only through approved controls. V1 is intended for supported IBM AIX 7.x systems, but has not been validated against a specific TL/SP. The V1 collector has not yet been runtime-validated on IBM AIX and is not approved for production use. Its first runtime validation must be performed on a non-production AIX LPAR.
+The evidence file can contain sensitive internal system configuration data, including hostname, IP addresses, routes, PVIDs, storage and adapter topology, SRC service details, and `errpt` information. Handle it as internal system configuration data and store or share it only through approved controls. V1 is intended for supported IBM AIX 7.x systems; validation to date is limited to the non-production platform described below.
+
+## V1 Validation Status
+
+V1 was successfully runtime-tested on 06-Nov-2026 on one non-production IBM AIX 7.3 LPAR (7300-04-02-2633). The syntax check and collection completed successfully, with all 19 sections successful and no remediation changes. This does not constitute production approval; additional validation is required before production use.
 
 ## Safety
 
