@@ -6,6 +6,8 @@
 
 **Role profile:** [pure-automation-dev.md](pure-automation-dev.md)
 
+**Pure references:** [topology](../references/pure-dev-topology.md), [volume map](../references/pure-dev-volume-map.md), and [runtime context](../references/pure-runtime-context.md). The five host-specific Pure-volume-to-AIX-disk identities are confirmed by exact serial match in the volume map. The two local/non-pod volumes are outside Pod promotion/demotion evaluation.
+
 Observed values below are context only. They are not approved expectations unless explicitly classified **CONFIRMED EXPECTED**. Shared DEV01/DEV02 replicated-storage expectations are conditional on the independently confirmed Pure site state and target mapping in the role profile.
 
 ## Identity
@@ -45,7 +47,7 @@ Observed values below are context only. They are not approved expectations unles
 |---|---|---|
 | Expected active VGs | UNKNOWN / REQUIRES OWNER CONFIRMATION | `rootvg` observed active. Confirm host-local vs replicated roles; replicated VG expectation depends on Pure site state and target mapping. |
 | Expected inactive VGs | UNKNOWN / REQUIRES OWNER CONFIRMATION | `old_rootvg` is observed inactive, but its retention/expected state has not been separately confirmed for DEV02. |
-| Expected intentionally unassigned disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | `hdisk1`, `ultracs_hdisk1`, and `ultracs_hdisk2` report VG `None`; identify their Pure Pod roles and expected assignment from confirmed site state and target mapping. Do not baseline the observed unassigned state. |
+| Expected intentionally unassigned disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | Exact serial correlation maps `ultracs_hdisk2`, `ultracs_hdisk1`, and `hdisk1` to the three Pod volumes; current evidence reports VG `None` for each. These may be unassigned on the demoted side. Do not baseline the observed state; promoted-side `data2vg` mapping remains unresolved. |
 | Expected stale PP count | CONFIRMED EXPECTED | 0. |
 | Other PV inventory | OBSERVED - EXPECTATION NOT YET CONFIRMED | `rootvg` uses `hdisk0`; `hdisk5` is assigned to inactive `old_rootvg`. Confirm inventory and intended roles. |
 
@@ -53,9 +55,9 @@ Observed values below are context only. They are not approved expectations unles
 
 | Item | Status | Expected value / observation |
 |---|---|---|
-| Expected disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | Five available disks observed: `hdisk0`, `hdisk1`, `hdisk5`, `ultracs_hdisk1`, `ultracs_hdisk2`. Confirm expected inventory, purpose, and which are replicated targets. |
+| Expected disks | OBSERVED - EXPECTATION NOT YET CONFIRMED | Exact serial correlation identifies five disks in the detailed volume map: three Pod disks and two local/non-pod disks. Pod identity is confirmed; expected state depends on runtime site state and the confirmed VG/filesystem mapping. |
 | Expected storage type | OBSERVED - EXPECTATION NOT YET CONFIRMED | Disks identified as PURE MPIO Drive (Fibre); confirm expected storage platform/type. |
-| Expected MPIO path count or acceptable range | CONFIRMED EXPECTED | 16 paths per applicable disk; applicability is determined by the approved disk/topology mapping. |
+| Expected MPIO path count or acceptable range | OBSERVED - EXPECTATION NOT YET CONFIRMED | 16 paths per discovered disk in DEV evidence; this is not a mandatory baseline until the expected count/range and applicable disks are confirmed. |
 | Expected path states | UNKNOWN / REQUIRES OWNER CONFIRMATION | `hdisk0` has selected/optimized paths; other devices show closed path states. For replicated targets, compare with the independently confirmed site state and target mapping. |
 
 ## Fibre Channel
@@ -99,12 +101,12 @@ Observed values below are context only. They are not approved expectations unles
 
 ## Profile Confidence
 
-- **Confirmed expected items:** Environment DEV; Pure Storage automation development/test role; DEV01/DEV02 Pure Pod membership; promotion/demotion may change replicated-storage ownership/activation; AIX `7300-04-02-2633`; 16 MPIO paths per applicable disk; expected FC adapters `fcs0`–`fcs3`; zero stale PPs; required active SRC services `sshd` and `splunkd`; repository filesystem thresholds and error-log review policy.
-- **Observed but unconfirmed items:** Host identity, PowerVM values including 8,192 MB memory and one online vCPU, filesystem utilization/mount inventory, active/inactive VG and PV inventory, disk/type/path observations, FC attributes, and network values.
-- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; `old_rootvg` retention/expected state; replicated target mapping and expected role of each disk/VG/filesystem; expected active VGs by Pure state; assignment of `hdisk1`, `ultracs_hdisk1`, and `ultracs_hdisk2` by Pure state; expected path states; server-specific network expectations; paging threshold; other SRC expectations.
+- **Confirmed expected items:** Environment DEV; Pure Storage automation development/test role; DEV01/DEV02 Pure Pod membership; promotion/demotion may change replicated-storage ownership/activation; AIX `7300-04-02-2633`; expected FC adapters `fcs0`–`fcs3`; zero stale PPs; required active SRC services `sshd` and `splunkd`; repository filesystem thresholds and error-log review policy.
+- **Observed but unconfirmed items:** Host identity, PowerVM values including 8,192 MB memory and one online vCPU, filesystem utilization/mount inventory, active/inactive VG and PV inventory, 16 MPIO paths per discovered disk, disk/type/path observations, FC attributes, and network values. Pure-volume-to-AIX-disk identity is separately confirmed by exact serial match in the volume-map reference; this is not an unconditional state expectation.
+- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; time applicability of the Pure snapshot; `old_rootvg` retention/expected state; expected active VGs by Pure state; assignment of Pod disks by Pure state; promoted-side `data2vg` VG/LV/filesystem expectation; expected path states; server-specific network expectations; paging threshold; other SRC expectations.
 - **NOT APPLICABLE items:** None established by the supplied evidence; none approved by an owner.
 - **Profile readiness:** **DRAFT - OWNER VALIDATION REQUIRED**
 
 ## Assessment Order and Safety
 
-Apply the sequence: collected evidence → collection validity → this host profile and [pure-automation-dev.md](pure-automation-dev.md) → independently confirmed Pure site state → deviations from confirmed expectations → engineering findings. Never infer Pure site state from the audited disk, VG, mount, or MPIO state. If state is UNKNOWN, do not generate state-dependent assignment/VG/mount findings. This profile does not override evidence or establish health. Investigation remains read-only; remediation is outside the audit workflow.
+Apply the sequence: collected evidence → collection validity → this host profile and [pure-automation-dev.md](pure-automation-dev.md) → independently confirmed Pure site state → deviations from confirmed expectations → engineering findings. Use exact serial correlation in the [volume map](../references/pure-dev-volume-map.md) for Pure identity; current AIX LVM evidence determines current VG role. The local boot/altroot disks are outside Pod promotion/demotion evaluation. A Pod disk may be unassigned on the independently confirmed demoted side. On the promoted side, evaluate only against a confirmed, applicable VG/filesystem expectation; if it is missing, report UNKNOWN and do not generate a compliance finding. If runtime state is UNKNOWN, do not generate state-dependent Pod assignment/VG/mount findings. The promoted-side `data2vg` VG/LV/filesystem expectation remains UNKNOWN. This profile does not override evidence or establish health. Investigation remains read-only; remediation is outside the audit workflow.

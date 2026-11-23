@@ -4,6 +4,8 @@
 
 Applies only to `kbdvultdev01` and `kbdvultdev02`. Host-specific disk, VG, filesystem, and PowerVM values remain in the corresponding host profiles and are not established by this shared role.
 
+The [volume map](../references/pure-dev-volume-map.md) records ten owner-supplied Pure-volume-to-AIX-disk identities confirmed by exact serial match: three Pod and two local/non-pod volumes per host. The two local boot/altroot volumes per host are outside Pod promotion/demotion evaluation. [Topology](../references/pure-dev-topology.md) records the relationship; independently timestamped [runtime context](../references/pure-runtime-context.md) is still required for each audit. The serial mapping establishes volume identity, not current AIX VG role or promotion state.
+
 ## Confirmed Role
 
 | Item | Status | Confirmed expectation |
@@ -23,7 +25,7 @@ Do not infer Pure site state from the storage configuration being audited, inclu
 
 ## Conditional Replicated-Storage Expectations
 
-First identify, from an owner-confirmed automation-test configuration, which disks, VGs, and filesystems are replicated targets and their intended roles on each side. That mapping is not supplied by this shared profile. Do not apply these rules to host-local or non-replicated resources.
+Apply these rules only to the three mapped Pod disks per host in the [volume map](../references/pure-dev-volume-map.md); the two mapped local/non-pod disks per host are excluded from Pod promotion/demotion evaluation. Exact serial equality establishes Pure volume identity. Determine current AIX VG role from current AIX LVM evidence, not from volume names, device names, sizes, LUNs, or VG-name strings.
 
 | Independently confirmed Pure site state | Conditional expected state for applicable replicated targets |
 |---|---|
@@ -31,18 +33,28 @@ First identify, from an owner-confirmed automation-test configuration, which dis
 | `DEMOTED` | Replicated target disks may be visible but unassigned; replicated target VGs are not expected active on that side; replicated filesystems are not expected mounted on that side. These expected demoted states must not generate faults. |
 | `UNKNOWN` | Return **UNKNOWN / REQUIRES OWNER CONFIRMATION** for state-dependent disk assignment, VG, and mount expectations. Do not generate compliance findings for those conditional states. |
 
+## Confirmed device and conditional AIX role mapping
+
+The detailed [Pure-to-AIX volume map](../references/pure-dev-volume-map.md) records all ten exact-serial correlations. Paired Pod volume identities are confirmed by the Pod volume identity and host connection; their serials differ across arrays and are not expected to match each other.
+
+- A corresponding Pod disk may legitimately be unassigned on the independently confirmed demoted side. Do not report that state as a fault.
+- The supplied AIX evidence confirms the DEV01 `data1vg` disk/LV/filesystem association: `ultracs_hdisk1` and `ultracs_hdisk2`; `fslv03` -> `/u3`; `fslv06` -> `/usr/spool/uv`. Apply it to promoted-side evaluation only when runtime state and mapping applicability are independently established. The association does not make `/usr/spool/uv` an unconditional mount requirement.
+- The mapped DEV02 data1 Pod disks are identified, but paired identity alone does not determine their current VG/LV/filesystem state. Use current AIX LVM evidence and only the applicable confirmed promoted-side expectation.
+- The three `data2vg`-named Pod volume identities map to AIX disks, but the promoted-side VG/LV/filesystem definition remains **UNKNOWN / REQUIRES OWNER CONFIRMATION**. Do not infer it from a Pure volume name.
+- The mapped local boot/altroot volumes are outside Pod state evaluation; assess their current AIX state separately under the applicable host profile.
+
 | Conditional profile item | Status | Confirmed expectation / limitation |
 |---|---|---|
-| Replicated target disk/VG/filesystem mapping by host and site state | UNKNOWN / REQUIRES OWNER CONFIRMATION | Obtain from the approved Pure Pod automation-test configuration; do not derive it from current evidence. |
-| MPIO paths | CONFIRMED EXPECTED | 16 paths per applicable disk; “applicable” disk identity and any topology-specific exceptions must be determined from the approved configuration. |
+| Promoted-side `data2vg` VG/LV/filesystem mapping | UNKNOWN / REQUIRES OWNER CONFIRMATION | Obtain from the approved Pure Pod automation-test configuration; do not derive it from current evidence or volume names. |
+| MPIO paths | OBSERVED - EXPECTATION NOT YET CONFIRMED | DEV evidence shows 16 paths per discovered disk. This is an observation, not a mandatory baseline; confirm the expected count or acceptable range and applicable disks with the owner. |
 
-`old_rootvg` and other host-specific VGs/disks are governed by the host profile unless the owner explicitly identifies them as replicated targets.
+`old_rootvg` and other host-specific VGs/disks are governed by the host profile and current AIX LVM evidence, not by Pure volume names. The local/non-pod mapping excludes those local disks from Pod promotion/demotion evaluation.
 
 ## Profile Confidence
 
-- **Confirmed expected items:** DEV environment, shared Pure Storage automation development/test role, DEV01/DEV02 Pure Pod membership, promotion/demotion testing may change replicated-storage ownership/activation, and 16 MPIO paths per applicable disk.
-- **Observed but unconfirmed items:** Host-specific hardware/storage inventory and current configuration are recorded only in each host profile.
-- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; mapping and expected role of each replicated target disk, VG, and filesystem; any other state-dependent host-specific baseline.
+- **Confirmed expected items:** DEV environment, shared Pure Storage automation development/test role, DEV01/DEV02 Pure Pod membership, promotion/demotion testing may change replicated-storage ownership/activation, ten Pure-volume-to-AIX-disk identity mappings by exact serial equality, two local/non-pod disks per host excluded from Pod state evaluation, and the supplied DEV01 `data1vg` disk/LV/filesystem association.
+- **Observed but unconfirmed items:** 16 paths per discovered disk in DEV evidence; host-specific current disk/VG/filesystem state and other configuration not explicitly established as conditional expected state.
+- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; time applicability of the Pure snapshot; promoted-side `data2vg` VG/LV/filesystem expectation; any other state-dependent host-specific baseline.
 - **NOT APPLICABLE items:** None assigned by this shared profile.
 - **Profile readiness:** **DRAFT - OWNER VALIDATION REQUIRED**
 

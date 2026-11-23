@@ -25,6 +25,8 @@ Keep the observed value, expected value, evidence/source, owner, applicable scop
 
 For DEV01/DEV02, the runtime Pure site state must be explicitly supplied or independently confirmed as `PROMOTED`, `DEMOTED`, or `UNKNOWN`. Do not infer it from disk assignment, VG state, filesystem mount state, or MPIO state in the evidence being audited. That would be circular reasoning. With state `UNKNOWN`, report **UNKNOWN / REQUIRES OWNER CONFIRMATION** for dependent replicated-storage expectations and do not generate compliance findings about them. Only compare storage with the conditional baseline after state and the applicable replicated target mapping are independently confirmed.
 
+Topology and observed Pure-side connections are documented in [pure-dev-topology.md](../references/pure-dev-topology.md) and [pure-dev-volume-map.md](../references/pure-dev-volume-map.md). The owner-supplied ten DEV01/DEV02 Pure-volume-to-AIX-disk mappings are confirmed by exact Pure/AIX serial equality. The volume-map reference records the partial AIX VG/LV/filesystem correlation and the unresolved promoted-side `data2vg` expectation. The [runtime context](../references/pure-runtime-context.md) must independently establish the host, array, Pod, promotion state, and applicability at the AIX collection time; a historical topology or volume map is not runtime state. Current AIX VG roles come from current AIX LVM evidence, not Pure volume names. Historical observations must not become unconditional profile defaults.
+
 ## Assessment order
 
 Analyze in this order:

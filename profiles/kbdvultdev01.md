@@ -6,6 +6,8 @@
 
 **Role profile:** [pure-automation-dev.md](pure-automation-dev.md)
 
+**Pure references:** [topology](../references/pure-dev-topology.md), [volume map](../references/pure-dev-volume-map.md), and [runtime context](../references/pure-runtime-context.md). The five host-specific Pure-volume-to-AIX-disk identities are confirmed by exact serial match in the volume map. The two local/non-pod volumes are outside Pod promotion/demotion evaluation.
+
 Observed values below are context only. They are not approved expectations unless explicitly classified **CONFIRMED EXPECTED**. Shared DEV01/DEV02 replicated-storage expectations are conditional on the independently confirmed Pure site state and target mapping in the role profile.
 
 ## Identity
@@ -32,9 +34,10 @@ Observed values below are context only. They are not approved expectations unles
 
 | Item | Status | Expected value / observation |
 |---|---|---|
-| Expected mounted filesystems | UNKNOWN / REQUIRES OWNER CONFIRMATION | Mount expectations for replicated/application filesystems depend on independently confirmed Pure site state and target mapping. Observed `df -g` includes `/`, `/usr`, `/var`, `/tmp`, `/home`, `/admin`, `/opt`, `/var/adm/ras/livedump`, and `/u3`; these are observations only. |
-| `/usr/spool/uv` mount expectation | CONFIRMED EXPECTED | Expected mounted when its corresponding replicated/application storage is expected active on DEV01. Not unconditional: follow the Pure site-state and target mapping. |
-| Expected intentionally unmounted filesystems | UNKNOWN / REQUIRES OWNER CONFIRMATION | `/usr/spool/uv` is configured in `lsfs` but absent from `df -g`; `fslv06` is shown closed/synced. Whether it should be mounted depends on corresponding storage activity and the confirmed Pure site state. |
+| Expected mounted filesystems | UNKNOWN / REQUIRES OWNER CONFIRMATION | Mount expectations for replicated/application filesystems depend on independently confirmed Pure site state and applicable VG/filesystem mapping. Observed `df -g` includes `/`, `/usr`, `/var`, `/tmp`, `/home`, `/admin`, `/opt`, `/var/adm/ras/livedump`, and `/u3`; these are observations only. |
+| `/usr/spool/uv` VG/LV/filesystem association | OBSERVED - EXPECTATION NOT YET CONFIRMED | Supplied AIX evidence maps `data1vg` -> `fslv06` -> `/usr/spool/uv`. The filesystem is configured but absent from captured `df -g`, and `fslv06` was reported closed/synced. This association alone does not make it an unconditional mount requirement. |
+| `/usr/spool/uv` conditional mount expectation | UNKNOWN / REQUIRES OWNER CONFIRMATION | Evaluate only when DEV01 runtime state and the promoted-side `data1vg` mapping are independently confirmed applicable. Do not generate a mount finding solely because it is configured but not mounted. |
+| Expected intentionally unmounted filesystems | UNKNOWN / REQUIRES OWNER CONFIRMATION | No unconditional intentionally unmounted filesystem baseline supplied. |
 | Filesystem warning threshold | CONFIRMED EXPECTED | 85% used (repository default). |
 | Filesystem high threshold | CONFIRMED EXPECTED | 90% used (repository default). |
 | Filesystem critical threshold | CONFIRMED EXPECTED | 95% used (repository default). |
@@ -44,9 +47,9 @@ Observed values below are context only. They are not approved expectations unles
 
 | Item | Status | Expected value / observation |
 |---|---|---|
-| Expected active VGs | UNKNOWN / REQUIRES OWNER CONFIRMATION | Observed active `rootvg` and `data1vg`. Confirm host-local vs replicated roles; replicated VG expectation depends on Pure site state and target mapping. |
+| Expected active VGs | UNKNOWN / REQUIRES OWNER CONFIRMATION | Observed active `rootvg` and `data1vg`. `data1vg` is associated with two confirmed Pod disks and is a promoted-side expectation only when runtime state and mapping applicability are independently established. |
 | Expected inactive VGs | CONFIRMED EXPECTED | `old_rootvg` is intentionally retained and inactive during normal operation. |
-| Expected intentionally unassigned disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | `hdisk2` reports VG `None`; determine its Pure Pod role and expected assignment from the confirmed site state and target mapping. Do not permanently baseline it assigned or unassigned. |
+| Expected intentionally unassigned disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | Exact serial correlation maps `hdisk2` to the Pod volume named `...data2vg`; current evidence reports VG `None`. It may be unassigned on the demoted side. Its promoted-side VG/LV/filesystem expectation is unresolved; do not infer it from the volume name. |
 | Expected stale PP count | CONFIRMED EXPECTED | 0. |
 | Other PV inventory | OBSERVED - EXPECTATION NOT YET CONFIRMED | `rootvg` uses `hdisk0`; `data1vg` uses `ultracs_hdisk1` and `ultracs_hdisk2`; `hdisk1` is assigned to inactive `old_rootvg`. Confirm inventory and intended roles. |
 
@@ -54,9 +57,9 @@ Observed values below are context only. They are not approved expectations unles
 
 | Item | Status | Expected value / observation |
 |---|---|---|
-| Expected disks | UNKNOWN / REQUIRES OWNER CONFIRMATION | Five available disks observed: `hdisk0`, `hdisk1`, `hdisk2`, `ultracs_hdisk1`, `ultracs_hdisk2`. Confirm expected inventory, purpose, and which are replicated targets. |
+| Expected disks | OBSERVED - EXPECTATION NOT YET CONFIRMED | Exact serial correlation identifies five disks in the detailed volume map: three Pod disks and two local/non-pod disks. Pod identity is confirmed; expected state depends on runtime site state and the confirmed VG/filesystem mapping. |
 | Expected storage type | OBSERVED - EXPECTATION NOT YET CONFIRMED | Disks identified as PURE MPIO Drive (Fibre); confirm expected storage platform/type. |
-| Expected MPIO path count or acceptable range | CONFIRMED EXPECTED | 16 paths per applicable disk; applicability is determined by the approved disk/topology mapping. |
+| Expected MPIO path count or acceptable range | OBSERVED - EXPECTATION NOT YET CONFIRMED | 16 paths per discovered disk in DEV evidence; this is not a mandatory baseline until the expected count/range and applicable disks are confirmed. |
 | Expected path states | UNKNOWN / REQUIRES OWNER CONFIRMATION | Captured active root/data volumes show selected/optimized paths; other devices show closed states. For replicated targets, compare with the independently confirmed site state and target mapping. |
 
 ## Fibre Channel
@@ -100,12 +103,12 @@ Observed values below are context only. They are not approved expectations unles
 
 ## Profile Confidence
 
-- **Confirmed expected items:** Environment DEV; Pure Storage automation development/test role; DEV01/DEV02 Pure Pod membership; promotion/demotion may change replicated-storage ownership/activation; AIX `7300-04-02-2633`; `/usr/spool/uv` mounted when corresponding replicated/application storage should be active on DEV01; `old_rootvg` retained inactive during normal operation; 16 MPIO paths per applicable disk; expected FC adapters `fcs0`–`fcs3`; zero stale PPs; required active SRC services `sshd` and `splunkd`; repository filesystem thresholds and error-log review policy.
-- **Observed but unconfirmed items:** Host identity, PowerVM values, filesystem utilization/mount observations, active VG/PV and disk inventory, storage type/path states, FC attributes, and network values.
-- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; replicated target mapping and expected role of each disk/VG/filesystem; expected active VGs by Pure state; `hdisk2` assignment by Pure state; filesystem mount state when corresponding replicated storage is not expected active; expected path states; server-specific network expectations; paging threshold; other SRC expectations.
+- **Confirmed expected items:** Environment DEV; Pure Storage automation development/test role; DEV01/DEV02 Pure Pod membership; promotion/demotion may change replicated-storage ownership/activation; AIX `7300-04-02-2633`; `old_rootvg` retained inactive during normal operation; expected FC adapters `fcs0`–`fcs3`; zero stale PPs; required active SRC services `sshd` and `splunkd`; repository filesystem thresholds and error-log review policy.
+- **Observed but unconfirmed items:** Host identity, PowerVM values, filesystem utilization/mount observations, active VG/PV and disk inventory, 16 MPIO paths per discovered disk, storage type/path states, FC attributes, and network values. Pure-volume-to-AIX-disk identity is separately confirmed by exact serial match in the volume-map reference; this is not an unconditional state expectation.
+- **Unknown items:** Runtime Pure site state until independently supplied/confirmed; time applicability of the Pure snapshot; `/usr/spool/uv` mount expectation; expected active VGs by Pure state; `hdisk2` state by Pure site state; promoted-side `data2vg` VG/LV/filesystem expectation; expected path states; server-specific network expectations; paging threshold; other SRC expectations.
 - **NOT APPLICABLE items:** None established by the supplied evidence; none approved by an owner.
 - **Profile readiness:** **DRAFT - OWNER VALIDATION REQUIRED**
 
 ## Assessment Order and Safety
 
-Apply the sequence: collected evidence → collection validity → this host profile and [pure-automation-dev.md](pure-automation-dev.md) → independently confirmed Pure site state → deviations from confirmed expectations → engineering findings. Never infer Pure site state from the audited disk, VG, mount, or MPIO state. If state is UNKNOWN, do not generate state-dependent assignment/VG/mount findings. This profile does not override evidence or establish health. Investigation remains read-only; remediation is outside the audit workflow.
+Apply the sequence: collected evidence → collection validity → this host profile and [pure-automation-dev.md](pure-automation-dev.md) → independently confirmed Pure site state → deviations from confirmed expectations → engineering findings. Use exact serial correlation in the [volume map](../references/pure-dev-volume-map.md) for Pure identity; current AIX LVM evidence determines current VG role. The local boot/altroot disks are outside Pod promotion/demotion evaluation. A Pod disk may be unassigned on the independently confirmed demoted side. On the promoted side, evaluate only against a confirmed, applicable VG/filesystem expectation; if it is missing, report UNKNOWN and do not generate a compliance finding. If runtime state is UNKNOWN, do not generate state-dependent Pod assignment/VG/mount findings. The promoted-side `data2vg` VG/LV/filesystem expectation remains UNKNOWN. This profile does not override evidence or establish health. Investigation remains read-only; remediation is outside the audit workflow.
