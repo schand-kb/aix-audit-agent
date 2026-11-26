@@ -1,46 +1,98 @@
 #!/usr/bin/ksh
 
+set +x
+
 # Run only from an engineer-controlled trusted directory not writable by
 # untrusted users. Do not run from /tmp or another shared writable directory.
-# The collector creates exactly one new timestamped evidence file here.
+# By default the collector creates one new timestamped evidence file here.
+# With --stdout it creates no evidence file.
 
 PATH=/usr/bin:/usr/sbin:/sbin
-export PATH
+LC_ALL=C
+export PATH LC_ALL
+unset ENV BASH_ENV CDPATH LIBPATH LD_LIBRARY_PATH LD_PRELOAD
 
-if [ "$#" -ne 0 ]; then
-	printf '%s\n' 'This collector does not accept arguments.' >&2
-	exit 2
+output_mode=file
+privilege_mode=unprivileged
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--stdout)
+			if [ "$output_mode" != file ]; then
+				printf '%s\n' 'Duplicate --stdout option.' >&2
+				exit 2
+			fi
+			output_mode=stdout
+			;;
+		--privileged-readonly)
+			if [ "$privilege_mode" != unprivileged ]; then
+				printf '%s\n' 'Duplicate --privileged-readonly option.' >&2
+				exit 2
+			fi
+			privilege_mode=controlled-readonly
+			;;
+		*)
+			printf '%s\n' 'Usage: aix_readonly_audit.ksh [--stdout] [--privileged-readonly]' >&2
+			exit 2
+			;;
+	esac
+	shift
+done
+readonly output_mode privilege_mode
+if [ "$privilege_mode" = controlled-readonly ]; then
+	observed_os=$(/usr/bin/uname -s </dev/null)
+	if [ "$?" -ne 0 ] || [ "$observed_os" != AIX ]; then
+		printf '%s\n' 'Privileged collection refused: operating system is not confirmed as AIX.' >&2
+		exit 1
+	fi
 fi
+sudo_path=''
+if [ "$privilege_mode" = controlled-readonly ]; then
+	if [ -x /usr/bin/sudo ]; then
+		sudo_path=/usr/bin/sudo
+	elif [ -x /opt/freeware/bin/sudo ]; then
+		sudo_path=/opt/freeware/bin/sudo
+	fi
+fi
+readonly sudo_path
 
 umask 077
 set -C
 
-timestamp=$(date '+%Y%m%d_%H%M%S')
-timestamp_rc=$?
-if [ "$timestamp_rc" -ne 0 ]; then
-	printf '%s\n' 'Unable to generate an evidence filename timestamp.' >&2
-	exit 1
-fi
-
-case "$timestamp" in
-	[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
-	*)
+exec 3>&1
+if [ "$output_mode" = file ]; then
+	timestamp=$(date '+%Y%m%d_%H%M%S' </dev/null)
+	timestamp_rc=$?
+	if [ "$timestamp_rc" -ne 0 ]; then
 		printf '%s\n' 'Unable to generate an evidence filename timestamp.' >&2
 		exit 1
-		;;
-esac
+	fi
 
-evidence_file="aix_audit_${timestamp}_$$.txt"
-exec 3>&1
+	case "$timestamp" in
+		[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+		*)
+			printf '%s\n' 'Unable to generate an evidence filename timestamp.' >&2
+			exit 1
+			;;
+	esac
 
-# Open once under noclobber, then direct both collection streams to that file.
-if exec 4> "$evidence_file"; then
-	:
+	evidence_file="aix_audit_${timestamp}_$$.txt"
+	if exec 4> "$evidence_file"; then
+		:
+	else
+		printf '%s\n' "Unable to create evidence file: $evidence_file" >&2
+		exit 1
+	fi
 else
-	printf '%s\n' "Unable to create evidence file: $evidence_file" >&3
-	exit 1
+	exec 4>&1
 fi
 exec 1>&4 2>&1
+
+metadata_status=COMPLETE
+collection_start_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ' </dev/null)
+if [ "$?" -ne 0 ] || [ -z "$collection_start_utc" ]; then
+	collection_start_utc=UNAVAILABLE
+	metadata_status=INCOMPLETE
+fi
 
 total_sections=19
 successful_sections=0
@@ -48,7 +100,7 @@ failed_sections=0
 unavailable_sections=0
 
 write_section_header() {
-	section_timestamp=$(date '+%Y%m%d_%H%M%S')
+	section_timestamp=$(date '+%Y%m%d_%H%M%S' </dev/null)
 	timestamp_rc=$?
 	if [ "$timestamp_rc" -ne 0 ] || [ -z "$section_timestamp" ]; then
 		section_timestamp='UNAVAILABLE'
@@ -79,19 +131,33 @@ record_unavailable_status() {
 }
 
 printf '%s\n' 'AIX read-only audit evidence'
-printf '%s\n' 'Collection output and command stderr are captured in this file.'
+printf '%s\n' 'Collector version: 1.5'
+printf 'Collection start UTC: %s\n' "$collection_start_utc"
+printf 'Evidence output mode: %s\n' "$output_mode"
+printf 'Privilege mode: %s\n' "$privilege_mode"
+printf '%s\n' 'Section output and command stderr are captured together as evidence.'
 printf '%s\n' 'PERMISSION DENIED is not inferred; nonzero results are FAILED.'
 
 section_number=1
 section_name='System hostname'
 display_command='hostname'
 write_section_header
-if command -v hostname >/dev/null 2>&1; then
-	hostname
+if [ -x /usr/bin/hostname ]; then
+	observed_hostname=$(/usr/bin/hostname </dev/null)
 	command_rc=$?
+	printf 'Observed hostname: %s\n' "$observed_hostname"
+	if [ "$command_rc" -eq 0 ] && [ -z "$observed_hostname" ]; then
+		printf '%s\n' 'Observed hostname is empty; identity is unavailable.'
+		metadata_status=INCOMPLETE
+	fi
 	record_executed_status
 else
 	record_unavailable_status
+fi
+if [ "$privilege_mode" = controlled-readonly ] && \
+	{ [ "$section_status" != COLLECTED ] || [ "$observed_hostname" != db2test ]; }; then
+	printf '%s\n' 'Privileged collection refused: observed hostname is not db2test.'
+	exit 1
 fi
 
 section_number=2
@@ -99,7 +165,7 @@ section_name='Operating system and kernel'
 display_command='uname -a'
 write_section_header
 if command -v uname >/dev/null 2>&1; then
-	uname -a
+	uname -a </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -111,7 +177,7 @@ section_name='AIX service level'
 display_command='oslevel -s'
 write_section_header
 if command -v oslevel >/dev/null 2>&1; then
-	oslevel -s
+	oslevel -s </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -123,7 +189,7 @@ section_name='System configuration'
 display_command='prtconf'
 write_section_header
 if command -v prtconf >/dev/null 2>&1; then
-	prtconf
+	prtconf </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -135,7 +201,7 @@ section_name='LPAR configuration'
 display_command='lparstat -i'
 write_section_header
 if command -v lparstat >/dev/null 2>&1; then
-	lparstat -i
+	lparstat -i </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -147,7 +213,7 @@ section_name='Virtual memory statistics'
 display_command='vmstat 2 6'
 write_section_header
 if command -v vmstat >/dev/null 2>&1; then
-	vmstat 2 6
+	vmstat 2 6 </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -159,7 +225,7 @@ section_name='Memory usage summary'
 display_command='svmon -G'
 write_section_header
 if command -v svmon >/dev/null 2>&1; then
-	svmon -G
+	svmon -G </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -171,7 +237,7 @@ section_name='Paging spaces'
 display_command='lsps -a'
 write_section_header
 if command -v lsps >/dev/null 2>&1; then
-	lsps -a
+	lsps -a </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -183,7 +249,7 @@ section_name='Filesystem space'
 display_command='df -g'
 write_section_header
 if command -v df >/dev/null 2>&1; then
-	df -g
+	df -g </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -195,7 +261,7 @@ section_name='Filesystems'
 display_command='lsfs'
 write_section_header
 if command -v lsfs >/dev/null 2>&1; then
-	lsfs
+	lsfs </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -207,7 +273,7 @@ section_name='Volume groups'
 display_command='lsvg'
 write_section_header
 if command -v lsvg >/dev/null 2>&1; then
-	lsvg
+	lsvg </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -219,7 +285,7 @@ section_name='Physical volumes'
 display_command='lspv'
 write_section_header
 if command -v lspv >/dev/null 2>&1; then
-	lspv
+	lspv </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -231,7 +297,7 @@ section_name='Disk devices'
 display_command='lsdev -Cc disk'
 write_section_header
 if command -v lsdev >/dev/null 2>&1; then
-	lsdev -Cc disk
+	lsdev -Cc disk </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -243,7 +309,7 @@ section_name='Adapter devices'
 display_command='lsdev -Cc adapter'
 write_section_header
 if command -v lsdev >/dev/null 2>&1; then
-	lsdev -Cc adapter
+	lsdev -Cc adapter </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -255,7 +321,7 @@ section_name='Device paths'
 display_command='lspath'
 write_section_header
 if command -v lspath >/dev/null 2>&1; then
-	lspath
+	lspath </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -267,7 +333,7 @@ section_name='Network routes'
 display_command='netstat -rn'
 write_section_header
 if command -v netstat >/dev/null 2>&1; then
-	netstat -rn
+	netstat -rn </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -279,7 +345,7 @@ section_name='Network interfaces'
 display_command='netstat -in'
 write_section_header
 if command -v netstat >/dev/null 2>&1; then
-	netstat -in
+	netstat -in </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -291,7 +357,7 @@ section_name='Error report'
 display_command='errpt'
 write_section_header
 if command -v errpt >/dev/null 2>&1; then
-	errpt
+	errpt </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -303,7 +369,7 @@ section_name='SRC services'
 display_command='lssrc -a'
 write_section_header
 if command -v lssrc >/dev/null 2>&1; then
-	lssrc -a
+	lssrc -a </dev/null
 	command_rc=$?
 	record_executed_status
 else
@@ -337,6 +403,9 @@ v11_vg_cap=64
 v11_pv_cap=256
 v11_disk_cap=256
 v11_fc_cap=64
+v11_lv_cap=256
+queried_lv_count=0
+lv_cap_recorded=0
 active_vg_inventory_valid=0
 active_vg_inventory_names='|'
 
@@ -345,7 +414,7 @@ write_v11_section_header() {
 	v11_total=$((v11_total + 1))
 	printf '\nSection %s: %s\n' "$v11_section_number" "$v11_section_name"
 	printf 'Display command or skipped operation: %s\n' "$v11_display_command"
-	section_timestamp=$(date '+%Y%m%d_%H%M%S')
+	section_timestamp=$(date '+%Y%m%d_%H%M%S' </dev/null)
 	timestamp_rc=$?
 	if [ "$timestamp_rc" -ne 0 ] || [ -z "$section_timestamp" ]; then
 		section_timestamp='UNAVAILABLE'
@@ -552,6 +621,99 @@ write_discovery_output_block() {
 	printf '%s\n' 'Discovery output is line-prefixed and safely normalized.'
 }
 
+process_lv_inventory() {
+	lv_remaining=$1
+	lv_header_seen=0
+	lv_row_number=0
+	lv_newline='
+'
+	while [ -n "$lv_remaining" ]; do
+		case "$lv_remaining" in
+			*"$lv_newline"*)
+				lv_line=${lv_remaining%%"$lv_newline"*}
+				lv_remaining=${lv_remaining#*"$lv_newline"}
+				;;
+			*)
+				lv_line=$lv_remaining
+				lv_remaining=''
+				;;
+		esac
+		lv_row_number=$((lv_row_number + 1))
+		if ! is_safe_inventory_line "$lv_line"; then
+			v11_section_name="Unsafe logical volume row $lv_row_number"
+			v11_display_command='No command executed; discovery line contained a control character'
+			record_v11_skipped
+			continue
+		fi
+		set -- $lv_line
+		[ "$#" -gt 0 ] || continue
+		if [ "$lv_header_seen" -eq 0 ]; then
+			if [ "$#" -eq 1 ] && [ "$1" = "${validated_vg}:" ]; then
+				continue
+			fi
+			if [ "$#" -eq 10 ] && [ "$1" = LV ] && [ "$2" = NAME ] && \
+				[ "$3" = TYPE ] && [ "$4" = LPs ] && [ "$5" = PPs ] && \
+				[ "$6" = PVs ] && [ "$7" = LV ] && [ "$8" = STATE ] && \
+				[ "$9" = MOUNT ] && [ "${10}" = POINT ]; then
+				lv_header_seen=1
+				continue
+			fi
+			v11_section_name="Invalid logical volume header row $lv_row_number"
+			v11_display_command='No command executed; logical volume inventory header was not recognized'
+			record_v11_skipped
+			return
+		fi
+		lv_name=$1
+		lv_valid=1
+		[ "${#lv_name}" -ge 1 ] && [ "${#lv_name}" -le 64 ] || lv_valid=0
+		case "$lv_name" in
+			[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]*) ;;
+			*) lv_valid=0 ;;
+		esac
+		case "$lv_name" in
+			*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-]*) lv_valid=0 ;;
+		esac
+		if [ "$#" -lt 7 ]; then
+			lv_valid=0
+		else
+			case "$2" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-]*) lv_valid=0 ;; esac
+			for lv_number in "$3" "$4" "$5"; do
+				case "$lv_number" in ''|*[!0123456789]*) lv_valid=0 ;; esac
+			done
+			case "$6" in open/*|opened/*|closed/*|closed) ;; *) lv_valid=0 ;; esac
+		fi
+		if [ "$lv_valid" -ne 1 ]; then
+			v11_section_name="Invalid logical volume row $lv_row_number"
+			v11_display_command='No command executed; row failed the approved inventory structure'
+			record_v11_skipped
+		elif [ "$queried_lv_count" -ge "$v11_lv_cap" ]; then
+			if [ "$lv_cap_recorded" -eq 0 ]; then
+				v11_section_name='Logical volume enumeration cap reached'
+				v11_display_command='Logical volumes beyond the cap were not queried'
+				record_v11_skipped
+				lv_cap_recorded=1
+			fi
+		else
+			queried_lv_count=$((queried_lv_count + 1))
+			v11_section_name='Logical volume detail'
+			v11_display_command="lslv \"$lv_name\""
+			write_v11_section_header
+			if [ -x /usr/sbin/lslv ]; then
+				/usr/sbin/lslv "$lv_name" </dev/null
+				command_rc=$?
+				record_v11_executed_status
+			else
+				record_v11_unavailable_status
+			fi
+		fi
+	done
+	if [ "$lv_header_seen" -ne 1 ]; then
+		v11_section_name='Logical volume inventory header missing'
+		v11_display_command='No logical volume detail commands executed'
+		record_v11_skipped
+	fi
+}
+
 collect_vg_details() {
 	validated_vg=$1
 
@@ -559,7 +721,7 @@ collect_vg_details() {
 	v11_display_command="lsvg \"$validated_vg\""
 	write_v11_section_header
 	if command -v lsvg >/dev/null 2>&1; then
-		lsvg "$validated_vg"
+		lsvg "$validated_vg" </dev/null
 		command_rc=$?
 		record_v11_executed_status
 	else
@@ -570,7 +732,7 @@ collect_vg_details() {
 	v11_display_command="lsvg -p \"$validated_vg\""
 	write_v11_section_header
 	if command -v lsvg >/dev/null 2>&1; then
-		lsvg -p "$validated_vg"
+		lsvg -p "$validated_vg" </dev/null
 		command_rc=$?
 		record_v11_executed_status
 	else
@@ -581,11 +743,22 @@ collect_vg_details() {
 	v11_display_command="lsvg -l \"$validated_vg\""
 	write_v11_section_header
 	if command -v lsvg >/dev/null 2>&1; then
-		lsvg -l "$validated_vg"
+		lv_inventory_output=$(lsvg -l "$validated_vg" </dev/null 2>&4)
 		command_rc=$?
+		write_discovery_output_block "$lv_inventory_output"
 		record_v11_executed_status
+		if [ "$command_rc" -eq 0 ]; then
+			process_lv_inventory "$lv_inventory_output"
+		else
+			v11_section_name='Logical volume detail discovery failed'
+			v11_display_command='No logical volume detail commands executed'
+			record_v11_skipped
+		fi
 	else
 		record_v11_unavailable_status
+		v11_section_name='Logical volume detail discovery unavailable'
+		v11_display_command='No logical volume detail commands executed'
+		record_v11_skipped
 	fi
 }
 
@@ -595,7 +768,7 @@ collect_pv_detail() {
 	v11_display_command="lspv \"$validated_pv\""
 	write_v11_section_header
 	if command -v lspv >/dev/null 2>&1; then
-		lspv "$validated_pv"
+		lspv "$validated_pv" </dev/null
 		command_rc=$?
 		record_v11_executed_status
 	else
@@ -603,13 +776,13 @@ collect_pv_detail() {
 	fi
 }
 
-collect_disk_mpio() {
-	validated_disk=$1
-	v11_section_name='MPIO disk path detail'
-	v11_display_command="lsmpio -l \"$validated_disk\""
+collect_device_configuration() {
+	validated_device=$1
+	v11_section_name='Device configuration detail'
+	v11_display_command="lscfg -vl \"$validated_device\""
 	write_v11_section_header
-	if command -v lsmpio >/dev/null 2>&1; then
-		lsmpio -l "$validated_disk"
+	if command -v lscfg >/dev/null 2>&1; then
+		lscfg -vl "$validated_device" </dev/null
 		command_rc=$?
 		record_v11_executed_status
 	else
@@ -623,7 +796,7 @@ collect_fc_attributes() {
 	v11_display_command="lsattr -El \"$validated_fcs\""
 	write_v11_section_header
 	if command -v lsattr >/dev/null 2>&1; then
-		lsattr -El "$validated_fcs"
+		lsattr -El "$validated_fcs" </dev/null
 		command_rc=$?
 		record_v11_executed_status
 	else
@@ -814,7 +987,7 @@ process_disk_inventory() {
 				valid_disk_count=$((valid_disk_count + 1))
 				if [ "$queried_disk_count" -lt "$v11_disk_cap" ]; then
 					queried_disk_count=$((queried_disk_count + 1))
-					collect_disk_mpio "$candidate_name"
+					collect_device_configuration "$candidate_name"
 				else
 					if [ "$cap_recorded" -eq 0 ]; then
 						v11_section_name='Disk enumeration cap reached'
@@ -871,6 +1044,7 @@ process_fc_inventory() {
 						if [ "$queried_fc_count" -lt "$v11_fc_cap" ]; then
 							queried_fc_count=$((queried_fc_count + 1))
 							collect_fc_attributes "$candidate_name"
+							collect_device_configuration "$candidate_name"
 						else
 							if [ "$cap_recorded" -eq 0 ]; then
 								v11_section_name='Fibre Channel adapter enumeration cap reached'
@@ -907,7 +1081,7 @@ run_v11_inventory() {
 	case "$inventory_kind" in
 		vg)
 			if command -v lsvg >/dev/null 2>&1; then
-				inventory_output=$(lsvg -o 2>&4)
+				inventory_output=$(lsvg -o </dev/null 2>&4)
 				command_rc=$?
 			else
 				record_v11_unavailable_status
@@ -917,7 +1091,7 @@ run_v11_inventory() {
 			;;
 		pv)
 			if command -v lspv >/dev/null 2>&1; then
-				inventory_output=$(lspv 2>&4)
+				inventory_output=$(lspv </dev/null 2>&4)
 				command_rc=$?
 			else
 				record_v11_unavailable_status
@@ -927,7 +1101,7 @@ run_v11_inventory() {
 			;;
 		disk)
 			if command -v lsdev >/dev/null 2>&1; then
-				inventory_output=$(lsdev -Cc disk 2>&4)
+				inventory_output=$(lsdev -Cc disk </dev/null 2>&4)
 				command_rc=$?
 			else
 				record_v11_unavailable_status
@@ -937,7 +1111,7 @@ run_v11_inventory() {
 			;;
 		fc)
 			if command -v lsdev >/dev/null 2>&1; then
-				inventory_output=$(lsdev -Cc adapter 2>&4)
+				inventory_output=$(lsdev -Cc adapter </dev/null 2>&4)
 				command_rc=$?
 			else
 				record_v11_unavailable_status
@@ -969,22 +1143,11 @@ v11_section_name='Active volume groups'
 v11_display_command='lsvg -o'
 run_v11_inventory "$v11_section_name" "$v11_display_command" vg
 
-v11_section_name='Global MPIO path status'
-v11_display_command='lsmpio'
-write_v11_section_header
-if command -v lsmpio >/dev/null 2>&1; then
-	lsmpio
-	command_rc=$?
-	record_v11_executed_status
-else
-	record_v11_unavailable_status
-fi
-
 v11_section_name='Currently mounted filesystems'
 v11_display_command='mount'
 write_v11_section_header
 if command -v mount >/dev/null 2>&1; then
-	mount
+	mount </dev/null
 	command_rc=$?
 	record_v11_executed_status
 else
@@ -995,7 +1158,7 @@ v11_section_name='Filesystem inode usage'
 v11_display_command='df -i'
 write_v11_section_header
 if command -v df >/dev/null 2>&1; then
-	df -i
+	df -i </dev/null
 	command_rc=$?
 	record_v11_executed_status
 else
@@ -1006,6 +1169,184 @@ run_v11_inventory 'Physical volume discovery snapshot' 'lspv' pv
 run_v11_inventory 'Disk discovery snapshot' 'lsdev -Cc disk' disk
 run_v11_inventory 'Adapter discovery snapshot' 'lsdev -Cc adapter' fc
 
+run_fixed_section() {
+	v11_section_name=$1
+	v11_display_command=$2
+	shift 2
+	write_v11_section_header
+	if command -v "$1" >/dev/null 2>&1; then
+		"$@" </dev/null
+		command_rc=$?
+		record_v11_executed_status
+	else
+		record_v11_unavailable_status
+	fi
+}
+
+run_catalogue_section() {
+	if [ "$#" -ne 1 ]; then
+		printf '%s\n' 'Invalid catalogue dispatcher request.'
+		return 1
+	fi
+	catalogue_id=$1
+	case "$catalogue_id" in
+		AIX-BOOT-001)
+			v11_section_name='Boot device'
+			set -- /usr/sbin/bootinfo -b
+			;;
+		AIX-BOOT-003)
+			v11_section_name='Normal boot list'
+			set -- /usr/bin/bootlist -m normal -o
+			;;
+		AIX-DUMP-001)
+			v11_section_name='System dump configuration'
+			set -- /usr/bin/sysdumpdev -l
+			;;
+		AIX-SW-002)
+			v11_section_name='Interim fixes'
+			set -- /usr/sbin/emgr -l
+			;;
+		AIX-TUNE-002)
+			v11_section_name='Memory tunables'
+			set -- /usr/sbin/vmo -a
+			;;
+		AIX-TUNE-003)
+			v11_section_name='I/O tunables'
+			set -- /usr/sbin/ioo -a
+			;;
+		AIX-TUNE-004)
+			v11_section_name='Scheduler tunables'
+			set -- /usr/sbin/schedo -a
+			;;
+		AIX-OPS-002)
+			v11_section_name='Error logging configuration'
+			set -- /usr/lib/errdemon -l
+			;;
+		*)
+			printf '%s\n' 'Unknown catalogue dispatcher ID; no command executed.'
+			return 1
+			;;
+	esac
+	v11_display_command=$*
+	write_v11_section_header
+	printf 'Catalogue ID: %s\n' "$catalogue_id"
+	printf 'Execution mode: %s\n' "$privilege_mode"
+	if [ "$privilege_mode" = controlled-readonly ]; then
+		if [ -z "$sudo_path" ]; then
+			printf '%s\n' 'Command was not executed: fixed sudo executable unavailable.'
+			v11_unavailable=$((v11_unavailable + 1))
+			printf '%s\n' 'Section status: COMMAND NOT AVAILABLE'
+			return 1
+		fi
+		printf 'Sudo executable: %s\n' "$sudo_path"
+		if [ "$catalogue_id" = AIX-BOOT-003 ]; then
+			bootlist_output=$("$sudo_path" -n "$@" </dev/null 2>&4)
+			command_rc=$?
+			printf '%s\n' "$bootlist_output"
+		else
+			"$sudo_path" -n "$@" </dev/null
+			command_rc=$?
+		fi
+	elif [ -x "$1" ]; then
+		if [ "$catalogue_id" = AIX-BOOT-003 ]; then
+			bootlist_output=$("$@" </dev/null 2>&4)
+			command_rc=$?
+			printf '%s\n' "$bootlist_output"
+		else
+			"$@" </dev/null
+			command_rc=$?
+		fi
+	else
+		record_v11_unavailable_status
+		return 0
+	fi
+	if [ "$catalogue_id" = AIX-BOOT-003 ] && [ "$command_rc" -eq 0 ] && [ -z "$bootlist_output" ]; then
+		printf 'Command return code: %s\n' "$command_rc"
+		printf '%s\n' 'Empty boot list output is inconclusive.'
+		v11_failed=$((v11_failed + 1))
+		printf '%s\n' 'Section status: FAILED'
+	else
+		record_v11_executed_status
+	fi
+	if [ "$privilege_mode" = controlled-readonly ] && [ "$command_rc" -ne 0 ]; then
+		printf '%s\n' 'Privileged collection stopped after sudo command failure.'
+		return 1
+	fi
+}
+
+has_ntp_peer_row() {
+	peer_remaining=$1
+	newline='
+'
+	while [ -n "$peer_remaining" ]; do
+		case "$peer_remaining" in
+			*"$newline"*)
+				peer_line=${peer_remaining%%"$newline"*}
+				peer_remaining=${peer_remaining#*"$newline"}
+				;;
+			*)
+				peer_line=$peer_remaining
+				peer_remaining=''
+				;;
+		esac
+		set -- $peer_line
+		[ "$#" -ge 10 ] || continue
+		case "$3" in ''|*[!0123456789]*) continue ;; esac
+		case "$6" in ''|*[!0123456789]*) continue ;; esac
+		case "$7" in ''|*[!01234567]*) continue ;; esac
+		return 0
+	done
+	return 1
+}
+
+run_fixed_section 'LPAR identity' 'uname -L' uname -L
+run_catalogue_section AIX-BOOT-001 || exit 1
+run_fixed_section 'Last system boot' 'who -b' who -b
+run_fixed_section 'DNS resolver configuration' 'cat /etc/resolv.conf' cat /etc/resolv.conf
+run_fixed_section 'NTP service status' 'lssrc -s xntpd' lssrc -s xntpd
+v11_section_name='NTP peer status'
+v11_display_command='ntpq -pn'
+write_v11_section_header
+if command -v ntpq >/dev/null 2>&1; then
+	ntp_output=$(ntpq -pn </dev/null 2>&4)
+	command_rc=$?
+	printf '%s\n' "$ntp_output"
+	if [ "$command_rc" -eq 0 ] && ! has_ntp_peer_row "$ntp_output"; then
+		printf 'Command return code: %s\n' "$command_rc"
+		printf '%s\n' 'No usable NTP peer row was found.'
+		v11_failed=$((v11_failed + 1))
+		printf '%s\n' 'Section status: FAILED'
+	else
+		record_v11_executed_status
+	fi
+else
+	record_v11_unavailable_status
+fi
+run_catalogue_section AIX-DUMP-001 || exit 1
+run_fixed_section 'Installed software' 'lslpp -L' lslpp -L
+run_catalogue_section AIX-SW-002 || exit 1
+run_fixed_section 'Processor attributes' '/usr/sbin/lsattr -El proc0' /usr/sbin/lsattr -El proc0
+run_fixed_section 'System attributes' '/usr/sbin/lsattr -El sys0' /usr/sbin/lsattr -El sys0
+run_fixed_section 'Interface configuration' '/usr/sbin/ifconfig -a' /usr/sbin/ifconfig -a
+run_catalogue_section AIX-BOOT-003 || exit 1
+run_fixed_section 'Network tunables' '/usr/sbin/no -a' /usr/sbin/no -a
+run_fixed_section 'NFS tunables' '/usr/sbin/nfso -a' /usr/sbin/nfso -a
+run_fixed_section 'Detailed path state' "/usr/sbin/lspath -F 'path_id status parent connection'" \
+	/usr/sbin/lspath -F 'path_id status parent connection'
+run_catalogue_section AIX-TUNE-002 || exit 1
+run_catalogue_section AIX-TUNE-003 || exit 1
+run_catalogue_section AIX-TUNE-004 || exit 1
+run_catalogue_section AIX-OPS-002 || exit 1
+
+printf '%s\n' 'Known gap: lsmpio-only path details are not collected; lspath and lscfg are not equivalent.'
+printf '%s\n' 'Known gap: application, backup, monitoring and DR assertions require approved external evidence.'
+
+collection_end_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ' </dev/null)
+if [ "$?" -ne 0 ] || [ -z "$collection_end_utc" ]; then
+	collection_end_utc=UNAVAILABLE
+	metadata_status=INCOMPLETE
+fi
+
 v11_classified_sections=$((v11_successful + v11_failed + v11_unavailable + v11_skipped + v11_not_applicable))
 if [ "$v11_total" -ne "$v11_classified_sections" ]; then
 	v11_status='INCOMPLETE / UNASSESSED'
@@ -1015,26 +1356,30 @@ else
 	v11_status='INCOMPLETE / UNASSESSED'
 fi
 
-if [ "$v1_status" = 'COMPLETE' ] && [ "$v11_status" = 'COMPLETE' ]; then
+if [ "$v1_status" = 'COMPLETE' ] && [ "$v11_status" = 'COMPLETE' ] && [ "$metadata_status" = 'COMPLETE' ]; then
 	overall_status='COMPLETE'
 else
 	overall_status='INCOMPLETE / UNASSESSED'
 fi
 
-printf '\nV1.1 total sections: %s\n' "$v11_total"
-printf 'V1.1 successful sections: %s\n' "$v11_successful"
-printf 'V1.1 failed sections: %s\n' "$v11_failed"
-printf 'V1.1 unavailable sections: %s\n' "$v11_unavailable"
-printf 'V1.1 skipped sections: %s\n' "$v11_skipped"
-printf 'V1.1 not applicable sections: %s\n' "$v11_not_applicable"
-printf 'V1.1 classified sections: %s\n' "$v11_classified_sections"
-printf 'V1.1 counter invariant: %s = %s + %s + %s + %s + %s\n' \
+printf '\nV1.5 extended total sections: %s\n' "$v11_total"
+printf 'V1.5 extended successful sections: %s\n' "$v11_successful"
+printf 'V1.5 extended failed sections: %s\n' "$v11_failed"
+printf 'V1.5 extended unavailable sections: %s\n' "$v11_unavailable"
+printf 'V1.5 extended skipped sections: %s\n' "$v11_skipped"
+printf 'V1.5 extended not applicable sections: %s\n' "$v11_not_applicable"
+printf 'V1.5 extended classified sections: %s\n' "$v11_classified_sections"
+printf 'V1.5 extended counter invariant: %s = %s + %s + %s + %s + %s\n' \
 	"$v11_total" "$v11_successful" "$v11_failed" "$v11_unavailable" "$v11_skipped" "$v11_not_applicable"
 printf 'V1 collection status: %s\n' "$v1_status"
-printf 'V1.1 collection status: %s\n' "$v11_status"
+printf 'V1.5 extended collection status: %s\n' "$v11_status"
+printf 'UTC metadata status: %s\n' "$metadata_status"
+printf 'Collection end UTC: %s\n' "$collection_end_utc"
 printf 'Overall collection status: %s\n' "$overall_status"
 
-printf '%s\n' "$evidence_file" >&3
+if [ "$output_mode" = file ]; then
+	printf '%s\n' "$evidence_file" >&3
+fi
 if [ "$overall_status" = 'COMPLETE' ]; then
 	exit 0
 fi
